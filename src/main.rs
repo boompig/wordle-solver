@@ -38,6 +38,18 @@ impl State {
         // (n_greens as _, n_zeros)
     }
 
+    fn reasonable_guess(&self, guess: Word) -> bool {
+        let possible_letters = self.spots.iter().copied().reduce(|a, b| a | b).unwrap();
+        self.spots.into_iter().zip(guess).any(|(spot, letter)| {
+            // compute if this letter is *un*reasonable
+            let bit = letter_bit(letter);
+            let unreasonable = spot == bit || // guessing a known green doesn't help
+            (spot & bit == 0 && self.must_have & bit == 0) || // guessing a known yellow doesn't help
+            possible_letters & bit == 0; // known black
+            !unreasonable
+        })
+    }
+
     fn could_be_answer(&self, guess: Word) -> bool {
         let mut has_letters = 0;
         for (spot, letter) in self.spots.into_iter().zip(guess) {
@@ -100,7 +112,10 @@ impl State {
 
 type Word = [u8; 5];
 
+#[derive(Default)]
 struct Context {
+    n_hits: usize,
+    hit_depths: [usize; 10],
     memo: HashMap<State, Node>,
 }
 
@@ -117,149 +132,58 @@ fn to_word(w: impl AsRef<[u8]>) -> Word {
 }
 
 impl Context {
-    fn new() -> Self {
-        // static ONLY_GUESSES: &[u8] = include_bytes!("../guesses.txt");
-        // static ANSWERS: &[u8] = include_bytes!("../answers.txt");
-
-        // let mut guesses: Vec<Word> = ONLY_GUESSES.split(|&b| b == b'\n').map(to_word).collect();
-        // let answers: Vec<Word> = ANSWERS.split(|&b| b == b'\n').map(to_word).collect();
-
-        // guesses.extend(answers.iter().copied());
-
-        Self {
-            memo: Default::default(),
-        }
-    }
-
-    // fn solve(&mut self, depth: usize, state: State, guesses: &[Word], answers: &[Word]) -> &Node {
-    //     // NLL workaround
-    //     // https://stackoverflow.com/questions/38023871/returning-a-reference-from-a-hashmap-or-vec-causes-a-borrow-to-last-beyond-the-s
-    //     if self.memo.contains_key(&state) {
-    //         return &self.memo[&state];
-    //     }
-
-    //     if let &[only_answer] = answers {
-    //         return self.memo.entry(state).or_insert(Node {
-    //             max_guesses: 1,
-    //             n_total_guesses: 1,
-    //             n_possible_answers: 1,
-    //             guess: only_answer,
-    //         });
-    //     }
-
-    //     // let mut ranked_guesses: Vec<(usize, Word)> = guesses
-    //     //     .iter()
-    //     //     .map(|&guess| {
-    //     //         let max_next_answers = answers
-    //     //             .iter()
-    //     //             .map(|&answer| {
-    //     //                 let next_state = state.step(guess, answer);
-    //     //                 answers
-    //     //                     .iter()
-    //     //                     .copied()
-    //     //                     .filter(|&a| next_state.could_be_answer(a))
-    //     //                     .count()
-    //     //             })
-    //     //             .max()
-    //     //             .unwrap();
-    //     //         (max_next_answers, guess)
-    //     //     })
-    //     //     .collect();
-    //     // ranked_guesses.sort_unstable();
-    //     // let top_guesses: Vec<Word> = ranked_guesses
-
-    //     let node = guesses
-    //         .iter()
-    //         .map(|&guess| {
-    //             let mut node = Node {
-    //                 max_guesses: 0,
-    //                 n_total_guesses: 0,
-    //                 n_possible_answers: answers.len(),
-    //                 guess,
-    //             };
-
-    //             for &answer in answers {
-    //                 let next_state = state.step(guess, answer);
-    //                 let next_answers: Vec<Word> = answers
-    //                     .iter()
-    //                     .copied()
-    //                     .filter(|&a| next_state.could_be_answer(a))
-    //                     .collect();
-    //                 let n = self.solve(depth + 1, next_state, guesses, &next_answers);
-    //                 node.max_guesses = node.max_guesses.max(n.max_guesses + 1);
-    //                 node.n_total_guesses += n.n_total_guesses;
-    //             }
-
-    //             node
-    //         })
-    //         .min_by_key(|node| node.n_total_guesses)
-    //         .unwrap();
-
-    //     self.memo.entry(state).or_insert(node)
-    // }
-
-    fn solve(&mut self, depth: usize, state: State, guesses: &[Word], answers: &[Word]) -> &Node {
+    fn solve(
+        &mut self,
+        depth: usize,
+        state: State,
+        guesses: &[Word],
+        answers: &[Word],
+    ) -> Option<&Node> {
         // NLL workaround
         // https://stackoverflow.com/questions/38023871/returning-a-reference-from-a-hashmap-or-vec-causes-a-borrow-to-last-beyond-the-s
         if self.memo.contains_key(&state) {
-            return &self.memo[&state];
+            self.n_hits += 1;
+            if depth < self.hit_depths.len() {
+                self.hit_depths[depth] += 1;
+            }
+            return Some(&self.memo[&state]);
         }
 
         assert!(!answers.is_empty());
 
         if let &[only_answer] = answers {
-            return self.memo.entry(state).or_insert(Node {
+            return Some(self.memo.entry(state).or_insert(Node {
                 max_guesses: 1,
                 n_total_guesses: 1,
                 n_possible_answers: 1,
                 guess: only_answer,
-            });
+            }));
         }
 
-        if depth > 130 {
-            for answer in answers {
-                println!("{}", std::str::from_utf8(answer).unwrap())
-            }
-            panic!("Failed, {} answers", answers.len());
+        if depth > 7 {
+            return None;
         }
 
-        let mut letter_freq = HashMap::<u8, usize>::new();
-        for answer in answers {
-            for &letter in answer {
-                *letter_freq.entry(letter).or_default() += 1;
-            }
-        }
-
-        let top_guesses: Vec<Word>;
-        let n_guesses = 20;
+        let mut top_guesses: Vec<Word>;
+        let n_guesses = 4;
         let candidate_guesses = if answers.len() < n_guesses {
             &answers
         } else {
+            let mut groups = HashMap::<State, usize>::new();
             let mut ranked_guesses: Vec<(_, Word)> = guesses
                 .iter()
+                .filter(|&&guess| state.reasonable_guess(guess)) // TODO
                 // .filter(|&&g| state.could_be_answer(g)) // TODO is this a good idea?
-                .enumerate()
-                .map(|(i, &guess)| {
-                    // let max_next_answers = answers
-                    //     .iter()
-                    //     .map(|&answer| {
-                    //         let next_state = state.step(guess, answer);
-                    //         answers
-                    //             .iter()
-                    //             .copied()
-                    //             .filter(|&a| next_state.could_be_answer(a))
-                    //             .count()
-                    //     })
-                    //     .max()
-                    //     .unwrap_or(usize::MAX);
-                    // (max_next_answers, guess)
-                    let mut count = 0;
-                    for (i, letter) in guess.iter().enumerate() {
-                        if !guess[i + 1..].contains(letter) {
-                            count += letter_freq.get(letter).copied().unwrap_or_default();
-                        }
+                .map(|&guess| {
+                    groups.clear();
+
+                    for &answer in answers {
+                        let next_state = state.step(guess, answer);
+                        *groups.entry(next_state).or_default() += 1;
                     }
-                    (-(count as i32), guess)
+
+                    let max_bucket = groups.values().copied().max().unwrap();
+                    (max_bucket, guess)
                 })
                 .collect();
             ranked_guesses.sort_unstable();
@@ -268,13 +192,18 @@ impl Context {
                 .map(|(_score, guess)| *guess)
                 .take(n_guesses)
                 .collect();
+
+            if answers.len() < n_guesses {
+                top_guesses.extend(answers.iter().copied())
+            }
+
             top_guesses.as_slice()
         };
 
         let node = candidate_guesses
             .iter()
-            .map(|&guess| {
-                if depth <= 0 {
+            .filter_map(|&guess| {
+                if depth == 0 {
                     print!(
                         "depth: {depth}, guess: {}",
                         std::str::from_utf8(&guess).unwrap()
@@ -296,12 +225,12 @@ impl Context {
                         .filter(|&a| next_state.could_be_answer(a))
                         .collect();
                     // assert!(next_answers.len() < answers.len());
-                    let n = self.solve(depth + 1, next_state, guesses, &next_answers);
+                    let n = self.solve(depth + 1, next_state, guesses, &next_answers)?;
                     node.max_guesses = node.max_guesses.max(n.max_guesses + 1);
                     node.n_total_guesses += n.n_total_guesses;
                 }
 
-                if depth <= 0 {
+                if depth == 0 {
                     println!(
                         ", avg: {}, max: {}",
                         node.n_total_guesses as f32 / node.n_possible_answers as f32,
@@ -309,12 +238,11 @@ impl Context {
                     );
                 }
 
-                node
+                Some(node)
             })
-            .min_by_key(|node| node.max_guesses)
-            .unwrap();
+            .min_by_key(|node| (node.max_guesses, node.n_total_guesses))?;
 
-        self.memo.entry(state).or_insert(node)
+        Some(self.memo.entry(state).or_insert(node))
     }
 
     fn get_path(&self, answer: Word) -> Vec<Word> {
@@ -354,12 +282,19 @@ fn main() {
 
     let guesses = answers.clone();
 
-    let mut ctx = Context::new();
-    let node = ctx.solve(0, State::default(), &guesses, &answers);
+    let mut ctx = Context::default();
+    let node = ctx.solve(0, State::default(), &guesses, &answers).unwrap();
     println!("{}", std::str::from_utf8(&node.guess).unwrap());
     println!("{}", ctx.get_path_string(to_word("sugar")));
 
-    let mut counts = [0; 50];
+    println!(
+        "nodes: {}, hits: {}, hit depths: {:?}",
+        ctx.memo.len(),
+        ctx.n_hits,
+        ctx.hit_depths
+    );
+
+    let mut counts = [0; 10];
 
     let mut output = String::new();
     for answer in answers {
