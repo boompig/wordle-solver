@@ -1,7 +1,7 @@
 use clap::Parser;
 use ordered_float::NotNan;
 use rayon::prelude::*;
-
+use array2d::Array2D;
 use std::{collections::HashMap, fs::File, io::Write};
 
 const CROSSED_OUT: u8 = 0;
@@ -99,9 +99,13 @@ fn score_to_int(w: &Word) -> u8 {
 
 /**
  * guesses -> indexes into guess_words
- * guess_words -> the full list of guess words
+ * guess_words -> the full list of guess words (this never changes)
+ * matrix -> pre-computed answers for all guess-answer pairs
  */
-fn solve(params: &Params, depth: usize, guesses: &[usize], answers: &[usize], guess_words: &[Word], answer_words: &[Word], matrix: &Vec<Vec<Word>>) -> Option<Tree> {
+fn solve(params: &Params, depth: usize,
+    guesses: &[usize], answers: &[usize],
+    guess_words: &[Word], answer_words: &[Word],
+    matrix: &Array2D<Word>) -> Option<Tree> {
     assert!(!answers.is_empty());
     if depth >= 7 {
         return None;
@@ -124,7 +128,7 @@ fn solve(params: &Params, depth: usize, guesses: &[usize], answers: &[usize], gu
 
                 for &answer in answers {
                     // let colors = score(guess_words[guess], answer_words[answer]);
-                    let colors = matrix[guess][answer];
+                    let colors = matrix[(guess, answer)];
                     *groups.entry(colors).or_default() += 1;
                 }
 
@@ -163,7 +167,7 @@ fn solve(params: &Params, depth: usize, guesses: &[usize], answers: &[usize], gu
 
             let mut groups = HashMap::<Word, Vec<usize>>::new();
             for &answer in answers {
-                let colors = matrix[guess][answer];
+                let colors = matrix[(guess, answer)];
                 // let colors = score(guess_words[guess], answer_words[answer]);
                 groups.entry(colors).or_default().push(answer);
             }
@@ -208,24 +212,24 @@ struct Params {
     starting_word: Option<String>,
 }
 
-fn compute_matrix(guesses: &[Word], answers: &[Word]) -> Vec<Vec<Word>> {
-    let mut matrix: Vec<Vec<Word>> = Vec::new();
-
+fn compute_matrix(guesses: &[Word], answers: &[Word]) -> Array2D<Word> {
     print!("Precomputing {}x{} matrix of u8 elements (takes about 40s)...\n", guesses.len(), answers.len());
     std::io::stdout().flush().unwrap();
 
-    guesses.iter().for_each(|guess| {
+    let rows: Vec<Vec<Word>> = guesses.iter().map(|guess| {
         let row = answers.iter().map(|answer| {
             let s = score(*guess, *answer);
             return s;
-            // return scoreToInt(&s);
+            // return score_to_int(&s);
         }).collect();
-        matrix.push(row);
-    });
+        return row;
+    }).collect();
+
+    let matrix = Array2D::from_rows(&rows);
 
     print!("Done!\n");
 
-    let g = matrix[4000][1000];
+    let g = matrix[(4000, 1000)];
     print!("Entry for [4000, 1000] is {entry}!\n",
             entry=std::str::from_utf8(&g).unwrap()
             );
@@ -251,7 +255,7 @@ fn main() {
 
     // // pre-compute the matrix
     let matrix = compute_matrix(&guesses, &answers);
-    let g = matrix[4000][1000];
+    let g = matrix[(4000, 1000)];
     print!("Entry for [4000, 1000] is {entry}!\n",
             entry=std::str::from_utf8(&g).unwrap()
             );
