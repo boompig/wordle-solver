@@ -82,7 +82,7 @@ fn score(mut guess: Word, mut answer: Word) -> Word {
     colors
 }
 
-fn scoreToInt(w: &Word) -> u8 {
+fn score_to_int(w: &Word) -> u8 {
     let mut s = 0;
     for i in 0..5 {
         let v = match w[i] {
@@ -208,7 +208,7 @@ struct Params {
     starting_word: Option<String>,
 }
 
-fn computeMatrix(guesses: &[Word], answers: &[Word]) -> Vec<Vec<Word>> {
+fn compute_matrix(guesses: &[Word], answers: &[Word]) -> Vec<Vec<Word>> {
     let mut matrix: Vec<Vec<Word>> = Vec::new();
 
     print!("Precomputing {}x{} matrix of u8 elements (takes about 40s)...\n", guesses.len(), answers.len());
@@ -250,16 +250,16 @@ fn main() {
     }
 
     // // pre-compute the matrix
-    let matrix = computeMatrix(&guesses, &answers);
+    let matrix = compute_matrix(&guesses, &answers);
     let g = matrix[4000][1000];
     print!("Entry for [4000, 1000] is {entry}!\n",
             entry=std::str::from_utf8(&g).unwrap()
             );
 
-    let mut guessIndexes: Vec<usize> = (1..guesses.len()).collect();
-    let mut answerIndexes: Vec<usize> = (1..answers.len()).collect();
+    let guess_indexes: Vec<usize> = (1..guesses.len()).collect();
+    let answer_indexes: Vec<usize> = (1..answers.len()).collect();
 
-    let tree = solve(&params, 0, &guessIndexes, &answerIndexes, &guesses, &answers, &matrix).unwrap();
+    let tree = solve(&params, 0, &guess_indexes, &answer_indexes, &guesses, &answers, &matrix).unwrap();
     println!("\nDone!");
     tree.print(answers.len());
 
