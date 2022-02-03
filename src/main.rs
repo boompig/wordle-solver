@@ -5,6 +5,8 @@ use rayon::prelude::*;
 use std::{collections::HashMap, fs::File, io::Write};
 
 const CROSSED_OUT: u8 = 0;
+// const ALL_GREEN: u8 = 242;
+const ALL_GREEN: Word = [b'g'; 5];
 
 type Word = [u8; 5];
 type Colors = [u8; 5];
@@ -80,32 +82,54 @@ fn score(mut guess: Word, mut answer: Word) -> Word {
     colors
 }
 
-fn solve(params: &Params, depth: usize, guesses: &[Word], answers: &[Word]) -> Option<Tree> {
+fn scoreToInt(w: &Word) -> u8 {
+    let mut s = 0;
+    for i in 0..5 {
+        let v = match w[i] {
+            b'b' => 0,
+            b'y' => 1,
+            b'g' => 2,
+            // NOTE: this will never happen
+            _ => 0,
+        };
+        s += v * u8::pow(3, i.try_into().unwrap());
+    }
+    return s;
+}
+
+/**
+ * guesses -> indexes into guess_words
+ * guess_words -> the full list of guess words
+ */
+fn solve(params: &Params, depth: usize, guesses: &[usize], answers: &[usize], guess_words: &[Word], answer_words: &[Word], matrix: &Vec<Vec<Word>>) -> Option<Tree> {
     assert!(!answers.is_empty());
     if depth >= 7 {
         return None;
     }
 
     if let &[only_answer] = answers {
-        return Some(Tree::leaf(only_answer));
+        return Some(Tree::leaf(answer_words[only_answer]));
     }
 
-    let top_guesses: Vec<Word> = if depth == 0 && params.starting_word.is_some() {
-        vec![to_word(params.starting_word.as_ref().unwrap())]
+    let top_guesses: Vec<usize> = if depth == 0 && params.starting_word.is_some() {
+        let starting_word: Word = to_word(params.starting_word.as_ref().unwrap());
+        let starting_word_i: usize = guess_words.iter().position(|&word| word == starting_word).unwrap();
+        vec![starting_word_i,]
     } else {
         let mut groups = HashMap::<Word, usize>::new();
-        let mut ranked_guesses: Vec<(_, Word)> = guesses
+        let mut ranked_guesses: Vec<(_, usize)> = guesses
             .iter()
             .map(|&guess| {
                 groups.clear();
 
                 for &answer in answers {
-                    let colors = score(guess, answer);
+                    // let colors = score(guess_words[guess], answer_words[answer]);
+                    let colors = matrix[guess][answer];
                     *groups.entry(colors).or_default() += 1;
                 }
 
                 let mut sum: usize = groups.values().copied().sum();
-                sum -= groups.get(&[b'g'; 5]).copied().unwrap_or_default();
+                sum -= groups.get(&ALL_GREEN).copied().unwrap_or_default();
 
                 let avg = NotNan::new(sum as f64 / groups.len() as f64).unwrap();
                 (avg, guess)
@@ -125,25 +149,27 @@ fn solve(params: &Params, depth: usize, guesses: &[Word], answers: &[Word]) -> O
         .iter()
         .filter_map(|&guess| {
             if depth == 0 {
-                print!("{}...\r", std::str::from_utf8(&guess).unwrap());
+                let guess_word = guess_words[guess];
+                print!("{}...\n", std::str::from_utf8(&guess_word).unwrap());
                 std::io::stdout().flush().unwrap();
             }
 
             let mut tree = Tree {
                 total_guesses: answers.len(),
                 max_guesses: 0,
-                guess,
+                guess: guess_words[guess],
                 children: Default::default(),
             };
 
-            let mut groups = HashMap::<Word, Vec<Word>>::new();
+            let mut groups = HashMap::<Word, Vec<usize>>::new();
             for &answer in answers {
-                let colors = score(guess, answer);
+                let colors = matrix[guess][answer];
+                // let colors = score(guess_words[guess], answer_words[answer]);
                 groups.entry(colors).or_default().push(answer);
             }
 
-            let recurse = |(_score, grouped_answers): (&Colors, &Vec<Word>)| {
-                solve(params, depth + 1, guesses, grouped_answers)
+            let recurse = |(_score, grouped_answers): (&Colors, &Vec<usize>)| {
+                solve(params, depth + 1, guesses, grouped_answers, guess_words, answer_words, matrix)
             };
 
             let children: Vec<Option<Tree>> = if depth <= 1 {
@@ -154,7 +180,7 @@ fn solve(params: &Params, depth: usize, guesses: &[Word], answers: &[Word]) -> O
 
             for (&score, child) in groups.keys().zip(children) {
                 let child = child?;
-                if score != [b'g'; 5] {
+                if score != ALL_GREEN {
                     tree.total_guesses += child.total_guesses;
                 }
                 tree.max_guesses = tree.max_guesses.max(child.max_guesses + 1);
@@ -182,6 +208,30 @@ struct Params {
     starting_word: Option<String>,
 }
 
+fn computeMatrix(guesses: &[Word], answers: &[Word]) -> Vec<Vec<Word>> {
+    let mut matrix: Vec<Vec<Word>> = Vec::new();
+
+    print!("Precomputing {}x{} matrix of u8 elements (takes about 40s)...\n", guesses.len(), answers.len());
+    std::io::stdout().flush().unwrap();
+
+    guesses.iter().for_each(|guess| {
+        let row = answers.iter().map(|answer| {
+            let s = score(*guess, *answer);
+            return s;
+            // return scoreToInt(&s);
+        }).collect();
+        matrix.push(row);
+    });
+
+    print!("Done!\n");
+
+    let g = matrix[4000][1000];
+    print!("Entry for [4000, 1000] is {entry}!\n",
+            entry=std::str::from_utf8(&g).unwrap()
+            );
+    return matrix;
+}
+
 fn main() {
     println!("Wordle solver!");
 
@@ -199,7 +249,17 @@ fn main() {
         guesses.dedup();
     }
 
-    let tree = solve(&params, 0, &guesses, &answers).unwrap();
+    // // pre-compute the matrix
+    let matrix = computeMatrix(&guesses, &answers);
+    let g = matrix[4000][1000];
+    print!("Entry for [4000, 1000] is {entry}!\n",
+            entry=std::str::from_utf8(&g).unwrap()
+            );
+
+    let mut guessIndexes: Vec<usize> = (1..guesses.len()).collect();
+    let mut answerIndexes: Vec<usize> = (1..answers.len()).collect();
+
+    let tree = solve(&params, 0, &guessIndexes, &answerIndexes, &guesses, &answers, &matrix).unwrap();
     println!("\nDone!");
     tree.print(answers.len());
 
