@@ -2,7 +2,7 @@ use clap::Parser;
 use ordered_float::NotNan;
 use rayon::prelude::*;
 use array2d::Array2D;
-use std::{collections::HashMap, fs::File, io::Write};
+use std::{collections::HashMap, fs::File, io::Write, time::Instant};
 
 const CROSSED_OUT: u8 = 0;
 // const ALL_GREEN: u8 = 242;
@@ -82,20 +82,20 @@ fn score(mut guess: Word, mut answer: Word) -> Word {
     colors
 }
 
-fn score_to_int(w: &Word) -> u8 {
-    let mut s = 0;
-    for i in 0..5 {
-        let v = match w[i] {
-            b'b' => 0,
-            b'y' => 1,
-            b'g' => 2,
-            // NOTE: this will never happen
-            _ => 0,
-        };
-        s += v * u8::pow(3, i.try_into().unwrap());
-    }
-    return s;
-}
+// fn score_to_int(w: &Word) -> u8 {
+//     let mut s = 0;
+//     for i in 0..5 {
+//         let v = match w[i] {
+//             b'b' => 0,
+//             b'y' => 1,
+//             b'g' => 2,
+//             // NOTE: this will never happen
+//             _ => 0,
+//         };
+//         s += v * u8::pow(3, i.try_into().unwrap());
+//     }
+//     return s;
+// }
 
 /**
  * guesses -> indexes into guess_words
@@ -154,7 +154,7 @@ fn solve(params: &Params, depth: usize,
         .filter_map(|&guess| {
             if depth == 0 {
                 let guess_word = guess_words[guess];
-                print!("{}...\n", std::str::from_utf8(&guess_word).unwrap());
+                print!("Computing decision tree for starting word {}...\n", std::str::from_utf8(&guess_word).unwrap());
                 std::io::stdout().flush().unwrap();
             }
 
@@ -213,7 +213,9 @@ struct Params {
 }
 
 fn compute_matrix(guesses: &[Word], answers: &[Word]) -> Array2D<Word> {
-    print!("Precomputing {}x{} matrix of u8 elements (takes about 40s)...\n", guesses.len(), answers.len());
+    let now = Instant::now();
+
+    print!("Pre-computing {}x{} matrix of 5-char elements (takes about 40s)...\n", guesses.len(), answers.len());
     std::io::stdout().flush().unwrap();
 
     let rows: Vec<Vec<Word>> = guesses.iter().map(|guess| {
@@ -227,12 +229,8 @@ fn compute_matrix(guesses: &[Word], answers: &[Word]) -> Array2D<Word> {
 
     let matrix = Array2D::from_rows(&rows);
 
-    print!("Done!\n");
+    print!("Done! Took {:.2}s.\n", now.elapsed().as_secs());
 
-    let g = matrix[(4000, 1000)];
-    print!("Entry for [4000, 1000] is {entry}!\n",
-            entry=std::str::from_utf8(&g).unwrap()
-            );
     return matrix;
 }
 
@@ -255,16 +253,14 @@ fn main() {
 
     // // pre-compute the matrix
     let matrix = compute_matrix(&guesses, &answers);
-    let g = matrix[(4000, 1000)];
-    print!("Entry for [4000, 1000] is {entry}!\n",
-            entry=std::str::from_utf8(&g).unwrap()
-            );
 
-    let guess_indexes: Vec<usize> = (1..guesses.len()).collect();
-    let answer_indexes: Vec<usize> = (1..answers.len()).collect();
+    let guess_indexes: Vec<usize> = (0..guesses.len()).collect();
+    let answer_indexes: Vec<usize> = (0..answers.len()).collect();
 
+    let now = Instant::now();
     let tree = solve(&params, 0, &guess_indexes, &answer_indexes, &guesses, &answers, &matrix).unwrap();
-    println!("\nDone!");
+    print!("Finished computing decision tree! Took {:.2}s.\n", now.elapsed().as_secs());
+
     tree.print(answers.len());
 
     let mut file = File::create("out.txt").unwrap();
